@@ -1,0 +1,96 @@
+# PC Virtual - Windows 11
+# Execute no PowerShell do Windows.
+
+$ErrorActionPreference = "Stop"
+
+$vmName = "PC-Virtual-Windows"
+$ramMB = 4096
+$cpuCount = 2
+$diskGB = 64
+
+# Localiza o VBoxManage
+$candidates = @(
+    "$env:ProgramFiles\Oracle\VirtualBox\VBoxManage.exe",
+    "${env:ProgramFiles(x86)}\Oracle\VirtualBox\VBoxManage.exe"
+)
+
+$vbox = $candidates |
+    Where-Object { Test-Path $_ } |
+    Select-Object -First 1
+
+if (-not $vbox) {
+    throw "VirtualBox não encontrado. Instale-o primeiro."
+}
+
+# Evita criar uma máquina duplicada
+$existing = & $vbox list vms
+if ($existing -match [regex]::Escape('"' + $vmName + '"')) {
+    throw "A máquina já existe: $vmName"
+}
+
+# Cria a máquina virtual
+& $vbox createvm `
+    --name $vmName `
+    --ostype Windows11_64 `
+    --register
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao criar a máquina virtual."
+}
+
+# Configura os recursos
+& $vbox modifyvm $vmName `
+    --memory $ramMB `
+    --cpus $cpuCount `
+    --vram 128 `
+    --ioapic on `
+    --firmware efi `
+    --tpm-type 2.0 `
+    --nic1 nat `
+    --boot1 dvd `
+    --boot2 disk
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao configurar a máquina."
+}
+
+# Cria o disco virtual
+$vmFolder = Join-Path $HOME "VirtualBox VMs\$vmName"
+New-Item -ItemType Directory -Path $vmFolder -Force |
+    Out-Null
+
+$diskPath = Join-Path $vmFolder "$vmName.vdi"
+
+& $vbox createmedium disk `
+    --filename $diskPath `
+    --size ($diskGB * 1024) `
+    --format VDI
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao criar o disco virtual."
+}
+
+# Conecta o disco
+& $vbox storagectl $vmName `
+    --name "SATA Controller" `
+    --add sata `
+    --controller IntelAhci
+
+& $vbox storageattach $vmName `
+    --storagectl "SATA Controller" `
+    --port 0 `
+    --device 0 `
+    --type hdd `
+    --medium $diskPath
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao conectar o disco."
+}
+
+Write-Host ""
+Write-Host "PC virtual criado com sucesso!" -ForegroundColor Green
+Write-Host "Nome: $vmName"
+Write-Host "RAM: $ramMB MB"
+Write-Host "Disco: $diskPath"
+Write-Host ""
+Write-Host "Agora abra o VirtualBox e configure a ISO do Windows."
